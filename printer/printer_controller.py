@@ -10,7 +10,7 @@ class PrinterController:
 
     def connect(self):
         if self.simulate:
-            print(f"[PrinterController] SIMULATION: Pretending to connect {self.port} @ {self.baud}")
+            print(f"[PrinterController] SIMULATION: Pretending to connect to {self.port} @ {self.baud}")
             return True
         try:
             self.ser = serial.Serial(self.port, self.baud, timeout=2)
@@ -31,7 +31,7 @@ class PrinterController:
             print(f"[PrinterController] Sent: {command}")
 
     def safe_park(self):
-        self.send_gcode("G28")
+        self.send_gcode("G28")  # Home all axes
         self.send_gcode("G1 X0 Y200 Z150 F3000")
         print("[PrinterController] Moved to safe park position")
 

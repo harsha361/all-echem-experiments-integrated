@@ -1,0 +1,35 @@
+e
+var h
+var r
+var j
+var o
+var d
+set_pgstat_chan 0
+set_pgstat_mode 3
+set_max_bandwidth 10k
+cell_off
+set_range ba 21m
+set_autoranging ba 21m 21m
+set_range ab 2100m
+set_autoranging ab 2100m 2100m
+meas_loop_ocp o 500m 30
+pck_start
+pck_add o
+pck_end
+endloop
+set_range ba 21u
+set_autoranging ba 2100p 21u
+store_var d 0 ab
+add_var d o
+set_e d
+cell_on
+meas_loop_eis h r j 10m 10k 1 41 d eis_opt(1 1)
+pck_start
+pck_add h
+pck_add r
+pck_add j
+pck_end
+endloop
+on_finished:
+cell_off
+
