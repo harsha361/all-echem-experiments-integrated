@@ -124,7 +124,7 @@ def RunElectrochemistry(config: ExperimentConfig.dataclass):
     return {"csv_file_path": csv_file_path, "avg_current": avg_current}
 
 
-
+'''
 @as_function_node("measurement_data", use_cache=False)
 def RunMeasurementLoop(config):
     """
@@ -144,6 +144,7 @@ def RunMeasurementLoop(config):
     setup_no = config.get("setup_no", "Setup_1")
     delay_between_cells = config.get("delta_cell", 2)
 
+    
     STEP = 73
     SAFE_Z = 45
     WORK_Z = 25
@@ -181,6 +182,76 @@ def RunMeasurementLoop(config):
 
     return {"csv_file_paths": csv_paths, "avg_currents": avg_currents}
 
+'''
+@as_function_node("measurement_data", use_cache=False)
+def RunMeasurementLoop(config):
+    """
+    Integrated loop: for each selected cell and repeat
+      - move printer → run chronoamperometry → save CSV
+    Returns CSV paths and average currents.
+    """
+    if hasattr(config, "__dict__"):
+        config = config.__dict__
+
+    selected_cells = config.get("selected_cells", [])
+    port = config.get("printer_port", "COM4")
+    baud = config.get("printer_baud", 115200)
+    palmsens_port = config.get("palmsens_port", "COM5")
+    palmsens_baud = config.get("palmsens_baud", 115200)
+    simulate = config.get("simulate", True)
+    setup_no = config.get("setup_no", "Setup_1")
+    delay_between_cells = config.get("delta_cell", 2)
+    delay_between_repeats = config.get("delta_repeat", 3)
+    num_repeats = config.get("num_repeats", 1)
+
+    STEP = 50
+    SAFE_Z = 115
+    WORK_Z = 98
+    START_X, START_Y = 121, 131
+
+    csv_paths, avg_currents = [], []
+
+    for repeat_idx in range(num_repeats):
+        print(f"\n=== Repeat {repeat_idx+1} of {num_repeats} ===\n")
+        for cell in selected_cells:
+            print(f"[RunMeasurementLoop] Cell {cell}")
+            ci = cell - 1
+            row, col = divmod(ci, 4)
+            x = START_X + col * STEP
+            y = START_Y + row * STEP
+
+            # move to safe Z, then XY, then down
+            send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+            send_gcode(f"G1 X{x:.2f} Y{y:.2f} F3000", port, baud, simulate)
+            send_gcode(f"G1 Z{WORK_Z:.2f} F1500", port, baud, simulate)
+            time.sleep(1)
+
+            # run chronoamperometry
+            out_dir = os.path.join(
+                "output",
+                setup_no,
+                f"cell_{cell:02}",
+                f"repeat_{repeat_idx+1:02}"
+            )
+            csv_path, avg_current = run_chronoamperometry(
+                port=palmsens_port,
+                baudrate=palmsens_baud,
+                script_path="scripts/Script_Chronoamperometry.mscr",
+                output_path=out_dir,
+                simulate=simulate,
+            )
+            csv_paths.append(csv_path)
+            avg_currents.append(avg_current)
+
+            # retract
+            send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+            time.sleep(delay_between_cells)
+
+        # wait between repeats
+        if repeat_idx < num_repeats - 1:
+            time.sleep(delay_between_repeats)
+
+    return {"csv_file_paths": csv_paths, "avg_currents": avg_currents}
 
 
 # ========== Manual printer control (GUI panel node) ==========
