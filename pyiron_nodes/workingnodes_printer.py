@@ -205,9 +205,9 @@ def RunMeasurementLoop(config):
     num_repeats = config.get("num_repeats", 1)
 
     STEP = 50
-    SAFE_Z = 115
-    WORK_Z = 98
-    START_X, START_Y = 121, 131
+    SAFE_Z = 0
+    WORK_Z = -19
+    START_X, START_Y = 0, 0
 
     csv_paths, avg_currents = [], []
 
@@ -262,12 +262,13 @@ def SamplePrinterMover(
     port: str = "COM4",
     speed: int = 2000,
     # absolute move defaults
-    default_x: float = 0.0, default_y: float = 0.0, default_z: float = 0.0,
+    default_x: float = 121.0, default_y: float = 131.0, default_z: float = 98.0,
     # per-axis jog increments
     x_step: float = 1.0, y_step: float = 1.0, z_step: float = 0.5,
     # safe/default presets
-    safe_x: float = 0.0, safe_y: float = 220.0, safe_z: float = 150.0,
+    safe_x: float = 121.0, safe_y: float = 131.0, safe_z: float = 115.0,
 ):
+
     import ipywidgets as widgets
     import serial
     import re
