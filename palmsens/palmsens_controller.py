@@ -216,4 +216,166 @@ def run_chronoamperometry(
         LOG.info("📊 Average of last 10 current values: %.4e A", avg_current)
 
     return csv_file_path, avg_current
+def run_cyclic_voltammetry(
+    port: str = "COM5",
+    baudrate: int = 1,
+    script_path: str = "scripts/Script_CyclicVoltammetry.mscr",
+    output_path: str = "output/CyclicVoltammetry_measurement",
+    simulate: bool = False
+) -> tuple[str, float | None]:
+    """
+    Run a cyclic voltammetry experiment (PalmSens or simulate).
+    Saves CSV + PNG. Returns (csv_path, avg_current_last_10 or None).
+    """
+    # Prepare output folders (uniform with CA)
+    output_csv = os.path.join(output_path, "cyclic_voltammetry_csv_data")
+    output_plot = os.path.join(output_path, "cyclic_voltammetry_plots_png")
+    os.makedirs(output_csv, exist_ok=True)
+    os.makedirs(output_plot, exist_ok=True)
 
+    # Timestamped filenames
+    now = datetime.datetime.now()
+    now_string = now.strftime('%Y%m%d-%H%M%S')
+    csv_file_path = os.path.join(output_csv, f"CyclicVoltammetry_Data_{now_string}.csv")
+    plot_file_path = os.path.join(output_plot, f"CyclicVoltammetry_Plot_{now_string}.png")
+
+    # --- SIMULATION ---
+    if simulate:
+        LOG.info("⚠️ Running CV in simulation mode (no device).")
+        applied_potential = [i * 0.01 for i in range(-100, 101)]  # -1.00 .. 1.00
+        measured_current  = [0.000001 * (0.5*i) for i in range(len(applied_potential))]
+
+    # --- REAL DEVICE ---
+    else:
+        LOG.info("🔌 Connecting to PalmSens on %s", port)
+        try:
+            with serial.Serial(port, baudrate) as comm:
+                dev = instrument.Instrument(comm)
+                dev_type = dev.get_device_type()
+                LOG.info("✅ Connected to device: %s", dev_type)
+
+                LOG.info("📤 Sending script: %s", script_path)
+                dev.send_script(script_path)
+
+                LOG.info("⏳ Waiting for device response...")
+                result_lines = dev.readlines_until_end()
+        except Exception as e:
+            LOG.error("❌ CV: communication error: %s", str(e))
+            # still return a path so caller can see where it tried to write
+            return csv_file_path, None
+
+        curves = mscript.parse_result_lines(result_lines)
+        if not curves:
+            LOG.error("❌ CV: no valid curves parsed from device.")
+            return csv_file_path, None
+
+        # column 0 = E (V), column 1 = I (A) for CV
+        applied_potential = mscript.get_values_by_column(curves, 0)
+        measured_current  = mscript.get_values_by_column(curves, 1)
+
+    # --- Save CSV (uniform headers) ---
+    df = pd.DataFrame({
+        "Applied Potential(V)": applied_potential,
+        "Measured Current(A)":  measured_current
+    })
+    df.to_csv(csv_file_path, index=False)
+
+    # --- Save Plot (uniform style) ---
+    plt.figure()
+    plt.plot(applied_potential, measured_current, label="Current (A)")
+    plt.xlabel("Potential (V)")
+    plt.ylabel("Current (A)")
+    plt.title("Cyclic Voltammetry")
+    plt.grid(True)
+    plt.savefig(plot_file_path)
+    plt.close()
+
+    # --- Metric: average of last 10 current values (uniform with CA) ---
+    avg_current = None
+    if len(df) >= 10:
+        avg_current = df["Measured Current(A)"].tail(10).mean()
+        LOG.info("📊 CV avg of last 10 current values: %.4e A", avg_current)
+
+    return csv_file_path, avg_current
+
+
+def run_ocp(
+    port: str = "COM5",
+    baudrate: int = 1,
+    script_path: str = "scripts/Script_OCP.mscr",
+    output_path: str = "output/OCP_measurement",
+    simulate: bool = False
+) -> tuple[str, float | None]:
+    """
+    Run an open-circuit potential experiment (PalmSens or simulate).
+    Saves CSV + PNG. Returns (csv_path, avg_potential_last_10 or None).
+    """
+    # Prepare output folders (uniform with CA)
+    output_csv = os.path.join(output_path, "ocp_csv_data")
+    output_plot = os.path.join(output_path, "ocp_plots_png")
+    os.makedirs(output_csv, exist_ok=True)
+    os.makedirs(output_plot, exist_ok=True)
+
+    # Timestamped filenames
+    now = datetime.datetime.now()
+    now_string = now.strftime('%Y%m%d-%H%M%S')
+    csv_file_path = os.path.join(output_csv, f"OCP_Data_{now_string}.csv")
+    plot_file_path = os.path.join(output_plot, f"OCP_Plot_{now_string}.png")
+
+    # --- SIMULATION ---
+    if simulate:
+        LOG.info("⚠️ Running OCP in simulation mode (no device).")
+        applied_time       = list(range(60))              # 60 s
+        measured_potential = [0.15 + i*1e-4 for i in applied_time]
+
+    # --- REAL DEVICE ---
+    else:
+        LOG.info("🔌 Connecting to PalmSens on %s", port)
+        try:
+            with serial.Serial(port, baudrate) as comm:
+                dev = instrument.Instrument(comm)
+                dev_type = dev.get_device_type()
+                LOG.info("✅ Connected to device: %s", dev_type)
+
+                LOG.info("📤 Sending script: %s", script_path)
+                dev.send_script(script_path)
+
+                LOG.info("⏳ Waiting for device response...")
+                result_lines = dev.readlines_until_end()
+        except Exception as e:
+            LOG.error("❌ OCP: communication error: %s", str(e))
+            return csv_file_path, None
+
+        curves = mscript.parse_result_lines(result_lines)
+        if not curves:
+            LOG.error("❌ OCP: no valid curves parsed from device.")
+            return csv_file_path, None
+
+        # column 0 = time (s), column 1 = potential (V) for OCP
+        applied_time       = mscript.get_values_by_column(curves, 0)
+        measured_potential = mscript.get_values_by_column(curves, 1)
+
+    # --- Save CSV (uniform headers) ---
+    df = pd.DataFrame({
+        "Applied time(s)":        applied_time,
+        "Measured Potential(V)":  measured_potential
+    })
+    df.to_csv(csv_file_path, index=False)
+
+    # --- Save Plot (uniform style) ---
+    plt.figure()
+    plt.plot(applied_time, measured_potential, label="Potential (V)")
+    plt.xlabel("Time (s)")
+    plt.ylabel("Potential (V)")
+    plt.title("Open Circuit Potential")
+    plt.grid(True)
+    plt.savefig(plot_file_path)
+    plt.close()
+
+    # --- Metric: average of last 10 potential values (uniform metric) ---
+    avg_potential = None
+    if len(df) >= 10:
+        avg_potential = df["Measured Potential(V)"].tail(10).mean()
+        LOG.info("📊 OCP avg of last 10 potential values: %.6f V", avg_potential)
+
+    return csv_file_path, avg_potential

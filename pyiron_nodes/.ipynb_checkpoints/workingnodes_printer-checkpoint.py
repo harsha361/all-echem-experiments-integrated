@@ -29,7 +29,7 @@ def CellSelector(
 
 
 
-
+'''
 @as_dataclass_node
 class ExperimentConfig:
     # future method plan – currently we only run Chronoamperometry
@@ -43,6 +43,30 @@ class ExperimentConfig:
     num_repeats: int = 1
     delta_cell: int = 2          # delay between cells (s)
     delta_repeat: int = 3        # delay between repeats (s)
+    setup_no: str = "Setup_1"
+
+    selected_cells: list = field(default_factory=list)
+
+    printer_port: str = "COM4"
+    palmsens_port: str = "COM5"
+    printer_baud: int = 115200
+    palmsens_baud: int = 115200
+
+    simulate: bool = True
+    show_plot: bool = False
+'''
+@as_dataclass_node
+class ExperimentConfig:
+    step_1: str = "Cyclic Voltammetry"
+    step_2: str = "Open Circuit Potential"
+    step_3: str = "Chronoamperometry"
+    step_4: str = "Cyclic Voltammetry"
+    step_5: str = "Open Circuit Potential"
+    step_6: str = "Chronoamperometry"
+
+    num_repeats: int = 1
+    delta_cell: int = 2
+    delta_repeat: int = 3
     setup_no: str = "Setup_1"
 
     selected_cells: list = field(default_factory=list)
@@ -183,6 +207,7 @@ def RunMeasurementLoop(config):
     return {"csv_file_paths": csv_paths, "avg_currents": avg_currents}
 
 '''
+'''
 @as_function_node("measurement_data", use_cache=False)
 def RunMeasurementLoop(config):
     """
@@ -205,8 +230,8 @@ def RunMeasurementLoop(config):
     num_repeats = config.get("num_repeats", 1)
 
     STEP = 50
-    SAFE_Z = 0
-    WORK_Z = -19
+    SAFE_Z = 12
+    WORK_Z =-25
     START_X, START_Y = 0, 0
 
     csv_paths, avg_currents = [], []
@@ -251,6 +276,223 @@ def RunMeasurementLoop(config):
         if repeat_idx < num_repeats - 1:
             time.sleep(delay_between_repeats)
     
+    send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+    send_gcode(f"G1 X{START_X:.2f} Y{START_Y:.2f} F3000", port, baud, simulate)
+
+    return {"csv_file_paths": csv_paths, "avg_currents": avg_currents}
+
+'''
+'''
+from pyiron_workflow import as_function_node
+import os, time
+from palmsens.palmsens_controller import run_chronoamperometry, run_cyclic_voltammetry, run_ocp
+from printer.printer_setup import send_gcode
+
+@as_function_node("measurement_data", use_cache=False)
+def RunMeasurementLoop(config):
+    if hasattr(config, "__dict__"):
+        config = config.__dict__
+
+    selected_cells = config.get("selected_cells", [])
+    port = config.get("printer_port", "COM4")
+    baud = config.get("printer_baud", 115200)
+    palmsens_port = config.get("palmsens_port", "COM5")
+    palmsens_baud = config.get("palmsens_baud", 115200)
+    simulate = config.get("simulate", True)
+    setup_no = config.get("setup_no", "Setup_1")
+    delay_between_cells = config.get("delta_cell", 2)
+    delay_between_repeats = config.get("delta_repeat", 3)
+    num_repeats = config.get("num_repeats", 1)
+
+    # Method steps
+    steps = [
+        config.get("step_1", "Chronoamperometry"),
+        config.get("step_2", "Chronoamperometry"),
+        config.get("step_3", "Chronoamperometry"),
+        config.get("step_4", "Chronoamperometry"),
+        config.get("step_5", "Chronoamperometry"),
+        config.get("step_6", "Chronoamperometry")
+    ]
+
+    STEP = 50
+    SAFE_Z = 0
+    WORK_Z = -19
+    START_X, START_Y = 0, 0
+
+    csv_paths, avg_currents = [], []
+
+    for repeat_idx in range(num_repeats):
+        print(f"\n=== Repeat {repeat_idx+1} of {num_repeats} ===\n")
+        for cell_idx, cell in enumerate(selected_cells):
+            method = steps[cell_idx % len(steps)]
+            print(f"[RunMeasurementLoop] Cell {cell} → Method: {method}")
+
+            ci = cell - 1
+            row, col = divmod(ci, 4)
+            x = START_X + col * STEP
+            y = START_Y + row * STEP
+
+            send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+            send_gcode(f"G1 X{x:.2f} Y{y:.2f} F3000", port, baud, simulate)
+            send_gcode(f"G1 Z{WORK_Z:.2f} F1500", port, baud, simulate)
+            time.sleep(1)
+
+            out_dir = os.path.join(
+                "output", setup_no, f"cell_{cell:02}", f"repeat_{repeat_idx+1:02}"
+            )
+
+            if method == "Chronoamperometry":
+                csv_path, avg = run_chronoamperometry(
+                    port=palmsens_port,
+                    baudrate=palmsens_baud,
+                    script_path="scripts/Script_Chronoamperometry.mscr",
+                    output_path=out_dir,
+                    simulate=simulate,
+                )
+            elif method == "Cyclic Voltammetry":
+                csv_path, avg = run_cyclic_voltammetry(
+                    port=palmsens_port,
+                    baudrate=palmsens_baud,
+                    script_path="scripts/Script_CV.mscr",
+                    output_path=out_dir,
+                    simulate=simulate,
+                )
+            elif method == "Open Circuit Potential":
+                csv_path, avg = run_ocp(
+                    port=palmsens_port,
+                    baudrate=palmsens_baud,
+                    script_path="scripts/Script_OCP.mscr",
+                    output_path=out_dir,
+                    simulate=simulate,
+                )
+            else:
+                print(f"❌ Unknown method '{method}' — skipping cell {cell}")
+                continue
+
+            csv_paths.append(csv_path)
+            avg_currents.append(avg)
+
+            send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+            time.sleep(delay_between_cells)
+
+        if repeat_idx < num_repeats - 1:
+            time.sleep(delay_between_repeats)
+
+    send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+    send_gcode(f"G1 X{START_X:.2f} Y{START_Y:.2f} F3000", port, baud, simulate)
+
+    return {"csv_file_paths": csv_paths, "avg_currents": avg_currents}
+'''
+from pyiron_workflow import as_function_node
+import os, time
+from palmsens.palmsens_controller import run_chronoamperometry, run_cyclic_voltammetry, run_ocp
+from printer.printer_setup import send_gcode
+
+@as_function_node("measurement_data", use_cache=False)
+def RunMeasurementLoop(config):
+    if hasattr(config, "__dict__"):
+        config = config.__dict__
+
+    selected_cells = config.get("selected_cells", [])
+    port = config.get("printer_port", "COM4")
+    baud = config.get("printer_baud", 115200)
+    palmsens_port = config.get("palmsens_port", "COM5")
+    palmsens_baud = config.get("palmsens_baud", 115200)
+    simulate = config.get("simulate", True)
+    setup_no = config.get("setup_no", "Setup_1")
+    delay_between_cells = config.get("delta_cell", 2)
+    delay_between_repeats = config.get("delta_repeat", 3)
+    num_repeats = config.get("num_repeats", 1)
+
+    # Build a clean steps list: drop None/empty and strip accidental inner quotes
+    raw_steps = [
+        config.get("step_1", ""),
+        config.get("step_2", ""),
+        config.get("step_3", ""),
+        config.get("step_4", ""),
+        config.get("step_5", ""),
+        config.get("step_6", ""),
+    ]
+    steps = []
+    for s in raw_steps:
+        if isinstance(s, str):
+            s_clean = s.strip().strip('"').strip("'")
+            if s_clean:
+                steps.append(s_clean)
+
+    STEP = 50
+    SAFE_Z = 0
+    WORK_Z = -19
+    START_X, START_Y = 0, 0
+
+    csv_paths, avg_currents = [], []
+
+    for repeat_idx in range(num_repeats):
+        print(f"\n=== Repeat {repeat_idx+1} of {num_repeats} ===\n")
+        for cell in selected_cells:
+            print(f"[RunMeasurementLoop] Cell {cell} → running {len(steps)} step(s)")
+
+            # compute XY for this cell
+            ci = cell - 1
+            row, col = divmod(ci, 4)
+            x = START_X + col * STEP
+            y = START_Y + row * STEP
+
+            # move to cell and go down once before steps
+            send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+            send_gcode(f"G1 X{x:.2f} Y{y:.2f} F3000", port, baud, simulate)
+            send_gcode(f"G1 Z{WORK_Z:.2f} F1500", port, baud, simulate)
+            time.sleep(1)
+
+            # run ALL configured steps for this cell (in order)
+            for step_idx, method in enumerate(steps, 1):
+                mkey = method.strip().upper()
+                print(f"[RunMeasurementLoop] Cell {cell} → Step {step_idx}: {method}")
+
+                out_dir = os.path.join(
+                    "output", setup_no, f"cell_{cell:02}", f"repeat_{repeat_idx+1:02}"
+                )
+
+                if mkey == "CHRONOAMPEROMETRY":
+                    csv_path, avg = run_chronoamperometry(
+                        port=palmsens_port,
+                        baudrate=palmsens_baud,
+                        script_path="scripts/Script_Chronoamperometry.mscr",
+                        output_path=out_dir,
+                        simulate=simulate,
+                    )
+                elif mkey == "CYCLIC VOLTAMMETRY":
+                    csv_path, avg = run_cyclic_voltammetry(
+                        port=palmsens_port,
+                        baudrate=palmsens_baud,
+                        script_path="scripts/Script_CV.mscr",
+                        output_path=out_dir,
+                        simulate=simulate,
+                    )
+                elif mkey == "OPEN CIRCUIT POTENTIAL":
+                    csv_path, avg = run_ocp(
+                        port=palmsens_port,
+                        baudrate=palmsens_baud,
+                        script_path="scripts/Script_OCP.mscrr",
+                        output_path=out_dir,
+                        simulate=simulate,
+                    )
+                else:
+                    print(f"❌ Unknown method '{method}' — skipping")
+                    continue
+
+                csv_paths.append(csv_path)
+                avg_currents.append(avg)
+
+            # retract only AFTER all steps are done for this cell
+            send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+            time.sleep(delay_between_cells)
+
+        # wait between repeats
+        if repeat_idx < num_repeats - 1:
+            time.sleep(delay_between_repeats)
+
+    # final park
     send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
     send_gcode(f"G1 X{START_X:.2f} Y{START_Y:.2f} F3000", port, baud, simulate)
 

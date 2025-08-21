@@ -8,7 +8,7 @@ set_pgstat_mode 2
 set_max_bandwidth 40
 cell_off
 store_var t 0 eb
-meas_loop_ocp p 1 600
+meas_loop_ocp p 1 60
     pck_start
     pck_add t
     pck_add p
