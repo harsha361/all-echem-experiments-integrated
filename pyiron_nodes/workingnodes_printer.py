@@ -250,6 +250,9 @@ def RunMeasurementLoop(config):
         # wait between repeats
         if repeat_idx < num_repeats - 1:
             time.sleep(delay_between_repeats)
+    
+    send_gcode(f"G1 Z{SAFE_Z:.2f} F1500", port, baud, simulate)
+    send_gcode(f"G1 X{START_X:.2f} Y{START_Y:.2f} F3000", port, baud, simulate)
 
     return {"csv_file_paths": csv_paths, "avg_currents": avg_currents}
 
