@@ -422,7 +422,7 @@ def RunMeasurementLoop(config):
 
     STEP = 50
     SAFE_Z = 0
-    WORK_Z = -19
+    WORK_Z = -25
     START_X, START_Y = 0, 0
 
     csv_paths, avg_currents = [], []
